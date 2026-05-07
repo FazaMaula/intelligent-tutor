@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Env files — never commit real API keys
+.env
+.env.local
