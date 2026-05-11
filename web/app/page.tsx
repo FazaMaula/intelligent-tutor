@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect, FormEvent, KeyboardEvent } from "react";
+import { useState, useRef, useEffect, FormEvent, KeyboardEvent, ChangeEvent } from "react";
 import ReactMarkdown from "react-markdown";
+import katex from "katex";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,8 +18,12 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [isOcrLoading, setIsOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState("");
+  const [ocrDraft, setOcrDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom whenever messages or streaming content changes
   useEffect(() => {
@@ -82,10 +87,40 @@ export default function ChatPage() {
     }
   }
 
+  async function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    setIsOcrLoading(true);
+    setOcrError("");
+
+    const form = new FormData();
+    form.append("file", file);
+
+    try {
+      const res = await fetch("/api/ocr", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "OCR gagal");
+      setOcrDraft(data.latex as string);
+    } catch (err) {
+      setOcrError(err instanceof Error ? err.message : "OCR gagal");
+    } finally {
+      setIsOcrLoading(false);
+    }
+  }
+
+  function confirmOcr() {
+    setInput((prev) => prev ? `${prev}\n\n$$${ocrDraft}$$` : `$$${ocrDraft}$$`);
+    setOcrDraft("");
+    inputRef.current?.focus();
+  }
+
   function handleReset() {
     setMessages([]);
     setStreamingContent("");
     setInput("");
+    setOcrDraft("");
     inputRef.current?.focus();
   }
 
@@ -138,29 +173,63 @@ export default function ChatPage() {
       </main>
 
       {/* ── Input ── */}
-      <form
-        onSubmit={handleSubmit}
-        className="flex gap-2 px-4 py-3 bg-white border-t border-gray-200 flex-shrink-0"
-      >
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={isLoading}
-          placeholder="Ketik pertanyaan atau soal di sini… (Enter untuk kirim)"
-          rows={1}
-          className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100 resize-none leading-relaxed"
-          style={{ maxHeight: "8rem", overflowY: "auto" }}
-        />
-        <button
-          type="submit"
-          disabled={isLoading || !input.trim()}
-          className="px-4 py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 active:bg-green-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end"
+      <div className="bg-white border-t border-gray-200 flex-shrink-0">
+        {ocrError && (
+          <p className="px-4 pt-2 text-xs text-red-500">{ocrError}</p>
+        )}
+        {ocrDraft && (
+          <OcrReviewPanel
+            draft={ocrDraft}
+            onChange={setOcrDraft}
+            onConfirm={confirmOcr}
+            onRetake={() => fileInputRef.current?.click()}
+            onCancel={() => setOcrDraft("")}
+          />
+        )}
+        <form
+          onSubmit={handleSubmit}
+          className="flex gap-2 px-4 py-3"
         >
-          Kirim
-        </button>
-      </form>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleImageUpload}
+          />
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={isLoading}
+            placeholder="Ketik pertanyaan atau soal di sini… (Enter untuk kirim)"
+            rows={1}
+            className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100 resize-none leading-relaxed"
+            style={{ maxHeight: "8rem", overflowY: "auto" }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading || isOcrLoading}
+            title="Unggah foto soal"
+            className="px-3 py-2.5 rounded-xl border border-gray-300 text-gray-600 text-sm hover:bg-gray-100 active:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end"
+          >
+            {isOcrLoading ? (
+              <span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <CameraIcon />
+            )}
+          </button>
+          <button
+            type="submit"
+            disabled={isLoading || !input.trim()}
+            className="px-4 py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 active:bg-green-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end"
+          >
+            Kirim
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -220,6 +289,94 @@ function TypingIndicator() {
         </div>
       </div>
     </div>
+  );
+}
+
+function OcrReviewPanel({
+  draft,
+  onChange,
+  onConfirm,
+  onRetake,
+  onCancel,
+}: {
+  draft: string;
+  onChange: (v: string) => void;
+  onConfirm: () => void;
+  onRetake: () => void;
+  onCancel: () => void;
+}) {
+  const [showEdit, setShowEdit] = useState(false);
+
+  let renderedHtml = "";
+  let renderError = false;
+  try {
+    renderedHtml = katex.renderToString(draft, { displayMode: true, throwOnError: true });
+  } catch {
+    renderError = true;
+  }
+
+  return (
+    <div className="mx-4 mt-3 mb-1 rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-2">
+      <p className="text-xs font-medium text-blue-700">Apakah formula ini sudah benar?</p>
+
+      <div className="rounded-lg bg-white border border-blue-100 px-4 py-3 text-center overflow-x-auto">
+        {renderError ? (
+          <span className="text-xs text-red-500 font-mono">{draft}</span>
+        ) : (
+          <span dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setShowEdit((v) => !v)}
+        className="text-xs text-blue-600 underline underline-offset-2"
+      >
+        {showEdit ? "Sembunyikan kode" : "Edit kode LaTeX"}
+      </button>
+
+      {showEdit && (
+        <textarea
+          value={draft}
+          onChange={(e) => onChange(e.target.value)}
+          rows={2}
+          className="w-full px-3 py-2 rounded-lg border border-blue-200 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+        />
+      )}
+
+      <div className="flex gap-2 justify-end">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors"
+        >
+          Batal
+        </button>
+        <button
+          type="button"
+          onClick={onRetake}
+          className="text-xs px-3 py-1.5 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors"
+        >
+          Foto ulang
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+        >
+          Gunakan formula ini
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CameraIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+      <circle cx="12" cy="13" r="3" />
+    </svg>
   );
 }
 
