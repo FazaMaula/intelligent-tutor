@@ -46,6 +46,19 @@ function detectAnswerRequest(text: string): boolean {
   return ANSWER_REQUEST_PATTERNS.some((p) => p.test(text));
 }
 
+const HINT_LEVEL_PATTERNS: Array<[number, RegExp[]]> = [
+  [3, [/walkthrough/i, /tetap kamu yang (?:ngerjain|mengerjakan)/i, /kita urut.{1,30}satu per satu/i]],
+  [2, [/langkah demi langkah/i, /langkah pertama/i, /kita urai/i, /kita pecah.{1,30}langkah/i, /kita perlu tahu apa dulu/i]],
+  [1, [/analogi/i, /coba bayangkan/i, /ingat.{1,30}(?:materi|pelajaran|konsep)/i, /pernah (?:belajar|dengar).{1,30}(?:materi|konsep|tentang)/i, /kita hubungkan/i]],
+];
+
+function detectHintLevel(text: string): number {
+  for (const [level, patterns] of HINT_LEVEL_PATTERNS) {
+    if (patterns.some((p) => p.test(text))) return level;
+  }
+  return 0;
+}
+
 function detectSubject(text: string): string | null {
   const t = text.toLowerCase();
   let best = { subject: "", score: 0 };
@@ -100,7 +113,7 @@ export async function logTurn(
     word_count: content.split(/\s+/).filter(Boolean).length,
     ends_with_question: isAssistant ? endsWithQuestion(content) : null,
     direct_answer_detected: isAssistant ? detectDirectAnswer(content) : null,
-    hint_level: isAssistant ? hintLevel : null,
+    hint_level: isAssistant ? (hintLevel ?? detectHintLevel(content)) : null,
     student_requested_answer: !isAssistant ? detectAnswerRequest(content) : null,
   });
   await supabase.rpc("increment_turn_count", { session_id_arg: sessionId });

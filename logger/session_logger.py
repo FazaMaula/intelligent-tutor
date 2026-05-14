@@ -27,6 +27,29 @@ _ANSWER_REQUEST_PATTERNS = [
     r"jawab\s+langsung",
 ]
 
+# Deteksi level Tangga Bantuan dari teks respons AI (fallback saat tidak dikirim eksplisit)
+_HINT_LEVEL_PATTERNS: list[tuple[int, list[str]]] = [
+    (3, [
+        r"walkthrough",
+        r"tetap kamu yang (?:ngerjain|mengerjakan)",
+        r"kita urut.{1,30}satu per satu",
+    ]),
+    (2, [
+        r"langkah demi langkah",
+        r"langkah pertama",
+        r"kita urai",
+        r"kita pecah.{1,30}langkah",
+        r"kita perlu tahu apa dulu",
+    ]),
+    (1, [
+        r"analogi",
+        r"coba bayangkan",
+        r"ingat.{1,30}(?:materi|pelajaran|konsep)",
+        r"pernah (?:belajar|dengar).{1,30}(?:materi|konsep|tentang)",
+        r"kita hubungkan",
+    ]),
+]
+
 _SUBJECT_KEYWORDS: dict[str, list[str]] = {
     "matematika": ["matematika", "aljabar", "turunan", "integral", "fungsi",
                    "trigonometri", "matriks", "vektor", "statistika", "peluang",
@@ -53,6 +76,14 @@ def _ends_with_question(text: str) -> bool:
 def _detect_answer_request(text: str) -> bool:
     t = text.lower()
     return any(re.search(p, t) for p in _ANSWER_REQUEST_PATTERNS)
+
+
+def _detect_hint_level(text: str) -> int:
+    t = text.lower()
+    for level, patterns in _HINT_LEVEL_PATTERNS:
+        if any(re.search(p, t) for p in patterns):
+            return level
+    return 0
 
 
 def _detect_subject(text: str) -> str | None:
@@ -139,6 +170,8 @@ def log_turn(
     hint_level: int | None = None,
 ) -> None:
     is_assistant = role == "assistant"
+    if is_assistant and hint_level is None:
+        hint_level = _detect_hint_level(content)
     conn = _connect()
     conn.execute(
         """INSERT INTO turns

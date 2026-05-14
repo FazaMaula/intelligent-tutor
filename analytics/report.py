@@ -7,11 +7,15 @@ def print_report() -> None:
 
     print("\n=== LAPORAN METRIK TUTOR CERDAS ===\n")
 
+    avg_dur = s["avg_duration_seconds"]
+    dur_str = f"{avg_dur / 60:.1f} menit" if avg_dur else "—"
+
     print("SESI")
     print(f"  Total sesi              : {s['total']}")
     print(f"  Terselesaikan           : {s['resolved']}  ({s['resolution_rate']:.0%})")
     print(f"  Rata-rata giliran       : {s['avg_turns']}")
     print(f"  Rata-rata (terselesai)  : {s['avg_turns_resolved']}")
+    print(f"  Rata-rata durasi        : {dur_str}")
 
     print("\nKEPATUHAN SOCRATIC")
     print(f"  Giliran AI              : {sc['assistant_turns']}")
@@ -21,6 +25,7 @@ def print_report() -> None:
     print("\nPERILAKU SISWA")
     print(f"  Giliran siswa           : {sb['user_turns']}")
     print(f"  Minta jawaban langsung  : {sb['answer_requests']}  ({sb['answer_request_rate']:.0%})")
+    print(f"  Ajukan pertanyaan sendiri: {sb['student_questions']}  ({sb['student_question_rate']:.0%})")
 
     if m["hint_level_distribution"]:
         labels = {"0": "Eksplorasi", "1": "Kontekstual", "2": "Scaffolding", "3": "Walkthrough"}

@@ -21,6 +21,12 @@ def compute_metrics() -> dict:
             "SELECT AVG(turn_count) FROM sessions WHERE resolved = 1"
         ).fetchone()[0] or 0
     )
+    avg_duration_seconds = (
+        conn.execute(
+            "SELECT AVG((julianday(ended_at) - julianday(started_at)) * 86400)"
+            " FROM sessions WHERE ended_at IS NOT NULL"
+        ).fetchone()[0] or 0
+    )
 
     assistant_turns = conn.execute(
         "SELECT COUNT(*) FROM turns WHERE role = 'assistant'"
@@ -38,6 +44,9 @@ def compute_metrics() -> dict:
     ).fetchone()[0]
     answer_requests = conn.execute(
         "SELECT COUNT(*) FROM turns WHERE role = 'user' AND student_requested_answer = 1"
+    ).fetchone()[0]
+    student_questions = conn.execute(
+        "SELECT COUNT(*) FROM turns WHERE role = 'user' AND content LIKE '%?%'"
     ).fetchone()[0]
 
     levels = conn.execute(
@@ -60,6 +69,7 @@ def compute_metrics() -> dict:
             "resolution_rate": round(resolved / total, 3) if total else 0,
             "avg_turns": round(avg_turns, 1),
             "avg_turns_resolved": round(avg_turns_resolved, 1),
+            "avg_duration_seconds": round(avg_duration_seconds, 1),
         },
         "socratic_compliance": {
             "assistant_turns": assistant_turns,
@@ -71,6 +81,8 @@ def compute_metrics() -> dict:
             "user_turns": user_turns,
             "answer_requests": answer_requests,
             "answer_request_rate": round(answer_requests / user_turns, 3) if user_turns else 0,
+            "student_questions": student_questions,
+            "student_question_rate": round(student_questions / user_turns, 3) if user_turns else 0,
         },
         "hint_level_distribution": {str(r["hint_level"]): r["n"] for r in levels},
         "subject_distribution": {r["subject"]: r["n"] for r in subjects},
