@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, FormEvent, KeyboardEvent, ChangeEvent } from "react";
+import { useState, useRef, useEffect, FormEvent, KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
-import katex from "katex";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,6 +10,16 @@ type Message = {
   content: string;
 };
 
+// ─── Logging ──────────────────────────────────────────────────────────────────
+
+function logTurn(sessionId: string, turn: number, role: "user" | "assistant", content: string) {
+  fetch("/api/log/turn", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, turn_number: turn, role, content }),
+  }).catch(() => {});
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
@@ -18,17 +27,48 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
-  const [isOcrLoading, setIsOcrLoading] = useState(false);
-  const [ocrError, setOcrError] = useState("");
-  const [ocrDraft, setOcrDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const turnNumberRef = useRef(0);
+  const [studentInfo, setStudentInfo] = useState<{ nama: string; nomorInduk: string } | null>(null);
 
   // Auto-scroll to bottom whenever messages or streaming content changes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
+
+  function startLoggingSession(nama: string, nomorInduk: string) {
+    fetch("/api/log/session/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "web", client_type: "web", nama_lengkap: nama, nomor_induk: nomorInduk }),
+    })
+      .then((r) => r.json())
+      .then((d) => { sessionIdRef.current = d.session_id; })
+      .catch(() => {});
+  }
+
+  function handleStudentInfoSubmit(nama: string, nomorInduk: string) {
+    setStudentInfo({ nama, nomorInduk });
+    startLoggingSession(nama, nomorInduk);
+  }
+
+  // End the session when the tab/window closes
+  useEffect(() => {
+    function onUnload() {
+      if (!sessionIdRef.current) return;
+      navigator.sendBeacon(
+        "/api/log/session/end",
+        new Blob(
+          [JSON.stringify({ session_id: sessionIdRef.current })],
+          { type: "application/json" }
+        )
+      );
+    }
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, []);
 
   async function handleSubmit(e?: FormEvent) {
     e?.preventDefault();
@@ -42,6 +82,10 @@ export default function ChatPage() {
     setInput("");
     setIsLoading(true);
     setStreamingContent("");
+
+    const sid = sessionIdRef.current;
+    const userTurn = ++turnNumberRef.current;
+    if (sid) logTurn(sid, userTurn, "user", text);
 
     try {
       const res = await fetch("/api/chat", {
@@ -65,6 +109,7 @@ export default function ChatPage() {
       }
 
       setMessages([...updatedMessages, { role: "assistant", content: full }]);
+      if (sid) logTurn(sid, ++turnNumberRef.current, "assistant", full);
     } catch (err) {
       console.error(err);
       setMessages([
@@ -87,45 +132,27 @@ export default function ChatPage() {
     }
   }
 
-  async function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-
-    setIsOcrLoading(true);
-    setOcrError("");
-
-    const form = new FormData();
-    form.append("file", file);
-
-    try {
-      const res = await fetch("/api/ocr", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "OCR gagal");
-      setOcrDraft(data.latex as string);
-    } catch (err) {
-      setOcrError(err instanceof Error ? err.message : "OCR gagal");
-    } finally {
-      setIsOcrLoading(false);
-    }
-  }
-
-  function confirmOcr() {
-    setInput((prev) => prev ? `${prev}\n\n$$${ocrDraft}$$` : `$$${ocrDraft}$$`);
-    setOcrDraft("");
-    inputRef.current?.focus();
-  }
-
   function handleReset() {
+    if (sessionIdRef.current) {
+      fetch("/api/log/session/end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionIdRef.current }),
+      }).catch(() => {});
+    }
+    if (studentInfo) startLoggingSession(studentInfo.nama, studentInfo.nomorInduk);
+    turnNumberRef.current = 0;
     setMessages([]);
     setStreamingContent("");
     setInput("");
-    setOcrDraft("");
     inputRef.current?.focus();
   }
 
   return (
     <div className="flex flex-col h-dvh bg-gray-50">
+      {studentInfo === null && (
+        <StudentInfoModal onSubmit={handleStudentInfoSubmit} />
+      )}
       {/* ── Header ── */}
       <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0">
         <div>
@@ -174,29 +201,10 @@ export default function ChatPage() {
 
       {/* ── Input ── */}
       <div className="bg-white border-t border-gray-200 flex-shrink-0">
-        {ocrError && (
-          <p className="px-4 pt-2 text-xs text-red-500">{ocrError}</p>
-        )}
-        {ocrDraft && (
-          <OcrReviewPanel
-            draft={ocrDraft}
-            onChange={setOcrDraft}
-            onConfirm={confirmOcr}
-            onRetake={() => fileInputRef.current?.click()}
-            onCancel={() => setOcrDraft("")}
-          />
-        )}
         <form
           onSubmit={handleSubmit}
           className="flex gap-2 px-4 py-3"
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleImageUpload}
-          />
           <textarea
             ref={inputRef}
             value={input}
@@ -208,19 +216,6 @@ export default function ChatPage() {
             className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100 resize-none leading-relaxed"
             style={{ maxHeight: "8rem", overflowY: "auto" }}
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading || isOcrLoading}
-            title="Unggah foto soal"
-            className="px-3 py-2.5 rounded-xl border border-gray-300 text-gray-600 text-sm hover:bg-gray-100 active:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end"
-          >
-            {isOcrLoading ? (
-              <span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <CameraIcon />
-            )}
-          </button>
           <button
             type="submit"
             disabled={isLoading || !input.trim()}
@@ -292,91 +287,64 @@ function TypingIndicator() {
   );
 }
 
-function OcrReviewPanel({
-  draft,
-  onChange,
-  onConfirm,
-  onRetake,
-  onCancel,
-}: {
-  draft: string;
-  onChange: (v: string) => void;
-  onConfirm: () => void;
-  onRetake: () => void;
-  onCancel: () => void;
-}) {
-  const [showEdit, setShowEdit] = useState(false);
+function StudentInfoModal({ onSubmit }: { onSubmit: (nama: string, nomorInduk: string) => void }) {
+  const [nama, setNama] = useState("");
+  const [nomorInduk, setNomorInduk] = useState("");
 
-  let renderedHtml = "";
-  let renderError = false;
-  try {
-    renderedHtml = katex.renderToString(draft, { displayMode: true, throwOnError: true });
-  } catch {
-    renderError = true;
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const n = nama.trim();
+    const ni = nomorInduk.trim();
+    if (!n || !ni) return;
+    onSubmit(n, ni);
   }
 
   return (
-    <div className="mx-4 mt-3 mb-1 rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-2">
-      <p className="text-xs font-medium text-blue-700">Apakah formula ini sudah benar?</p>
-
-      <div className="rounded-lg bg-white border border-blue-100 px-4 py-3 text-center overflow-x-auto">
-        {renderError ? (
-          <span className="text-xs text-red-500 font-mono">{draft}</span>
-        ) : (
-          <span dangerouslySetInnerHTML={{ __html: renderedHtml }} />
-        )}
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setShowEdit((v) => !v)}
-        className="text-xs text-blue-600 underline underline-offset-2"
-      >
-        {showEdit ? "Sembunyikan kode" : "Edit kode LaTeX"}
-      </button>
-
-      {showEdit && (
-        <textarea
-          value={draft}
-          onChange={(e) => onChange(e.target.value)}
-          rows={2}
-          className="w-full px-3 py-2 rounded-lg border border-blue-200 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
-        />
-      )}
-
-      <div className="flex gap-2 justify-end">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors"
-        >
-          Batal
-        </button>
-        <button
-          type="button"
-          onClick={onRetake}
-          className="text-xs px-3 py-1.5 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors"
-        >
-          Foto ulang
-        </button>
-        <button
-          type="button"
-          onClick={onConfirm}
-          className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-        >
-          Gunakan formula ini
-        </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm mx-4">
+        <div className="text-center mb-5">
+          <div className="text-4xl mb-2">📚</div>
+          <h2 className="text-base font-bold text-gray-800">Selamat Datang!</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Masukkan identitasmu sebelum mulai belajar.
+          </p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-gray-600 mb-1 block">
+              Nama Lengkap
+            </label>
+            <input
+              type="text"
+              value={nama}
+              onChange={(e) => setNama(e.target.value)}
+              placeholder="Contoh: Budi Santoso"
+              autoFocus
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600 mb-1 block">
+              Nomor Induk Siswa
+            </label>
+            <input
+              type="text"
+              value={nomorInduk}
+              onChange={(e) => setNomorInduk(e.target.value)}
+              placeholder="Contoh: 1234567890"
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!nama.trim() || !nomorInduk.trim()}
+            className="w-full mt-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Mulai Belajar
+          </button>
+        </form>
       </div>
     </div>
-  );
-}
-
-function CameraIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
-      <circle cx="12" cy="13" r="3" />
-    </svg>
   );
 }
 

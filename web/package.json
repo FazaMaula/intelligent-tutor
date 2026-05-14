@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.50.0",
+    "@supabase/supabase-js": "^2.105.4",
     "@types/katex": "^0.16.8",
     "katex": "^0.16.45",
     "next": "^15.5.16",

@@ -1,3 +1,6 @@
+# macOS
+.DS_Store
+
 # Python
 __pycache__/
 *.pyc
@@ -9,3 +12,6 @@ env/
 # Env files — never commit real API keys
 .env
 .env.local
+
+# Database logging — data lokal, tidak perlu di-commit
+data/*.db
