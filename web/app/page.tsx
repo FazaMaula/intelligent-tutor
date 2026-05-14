@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect, FormEvent, KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -201,9 +203,12 @@ export default function ChatPage() {
 
       {/* ── Input ── */}
       <div className="bg-white border-t border-gray-200 flex-shrink-0">
+        <p className="px-4 pt-2 text-xs text-gray-400">
+          Rumus: <span className="font-mono">x^2</span> · <span className="font-mono">akar(x)</span> · <span className="font-mono">2log16</span> · <span className="font-mono">sin(30)</span> · <span className="font-mono">a/b</span>
+        </p>
         <form
           onSubmit={handleSubmit}
-          className="flex gap-2 px-4 py-3"
+          className="flex gap-2 px-4 py-2 pb-3"
         >
           <textarea
             ref={inputRef}
@@ -211,7 +216,7 @@ export default function ChatPage() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isLoading}
-            placeholder="Ketik pertanyaan atau soal di sini… (Enter untuk kirim)"
+            placeholder="Ketik soal atau pertanyaan… Contoh rumus: x^2, akar(x), 2log16, sin(30)"
             rows={1}
             className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100 resize-none leading-relaxed"
             style={{ maxHeight: "8rem", overflowY: "auto" }}
@@ -348,10 +353,11 @@ function StudentInfoModal({ onSubmit }: { onSubmit: (nama: string, nomorInduk: s
   );
 }
 
-// Renders markdown with minimal inline styling — no extra packages needed
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
+      remarkPlugins={[remarkMath]}
+      rehypePlugins={[rehypeKatex]}
       components={{
         p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
         strong: ({ children }) => (
